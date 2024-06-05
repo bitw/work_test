@@ -1,0 +1,83 @@
+x-php-container: &php-container
+  build: ./docker/php
+  working_dir: /app
+  volumes:
+    - .:/app
+    - ./docker/php/php-ini-overrides.ini:/etc/php/8.1/fpm/conf.d/99-overrides.ini
+
+services:
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    working_dir: /app
+    volumes:
+      - .:/app
+      - ./docker/nginx/conf/nginx.conf:/etc/nginx/conf/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - ${NGINX_HOST_PORT}:80
+    depends_on:
+      - php
+    networks:
+      bridge:
+        ipv4_address: 172.10.0.2
+
+  php:
+    <<: *php-container
+    container_name: php
+    restart: always
+    expose:
+      - 8000
+    #command: php artisan octane:start --server=swoole --host=0.0.0.0 --port=8000 --watch
+    networks:
+      bridge:
+        ipv4_address: 172.10.0.3
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    hostname: ${DB_HOST}
+    restart: always
+    environment:
+      POSTGRES_DB: '${DB_DATABASE}'
+      POSTGRES_USER: '${DB_USERNAME}'
+      POSTGRES_PASSWORD: '${DB_PASSWORD}'
+    expose:
+      - 5432
+    ports:
+      - "${DB_HOST_PORT}:${DB_PORT}"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      bridge:
+        ipv4_address: 172.10.0.4
+
+  init:
+    <<: *php-container
+    container_name: init
+    depends_on:
+      - postgres
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        if [ ! -f .env ]; then
+          cp .env.local .env
+        fi
+        npm install
+        composer install --ignore-platform-reqs
+        php artisan migrate
+    networks:
+      bridge:
+        ipv4_address: 172.10.0.5
+
+volumes:
+  pg_data:
+
+networks:
+  bridge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.10.0.0/16
+          gateway: 172.10.0.1
